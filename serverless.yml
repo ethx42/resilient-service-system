@@ -1,0 +1,185 @@
+service: resilient-service-system
+
+frameworkVersion: '4'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  environment:
+    TABLE_NAME: !Ref ServiceResiliencyTable
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:PutItem
+          Resource: !GetAtt ServiceResiliencyTable.Arn
+        - Effect: Allow
+          Action:
+            - states:StartSyncExecution
+          Resource: !Sub arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ServiceResiliencyWorkflow-${sls:stage}
+
+plugins:
+  - serverless-step-functions
+
+functions:
+  get-state:
+    handler: functions/get-state.handler
+    environment:
+      TABLE_NAME: !Ref ServiceResiliencyTable
+
+  serviceL1:
+    handler: functions/services.serviceL1
+    environment:
+      TABLE_NAME: !Ref ServiceResiliencyTable
+
+  serviceL2:
+    handler: functions/services.serviceL2
+    environment:
+      TABLE_NAME: !Ref ServiceResiliencyTable
+
+  mutator:
+    handler: functions/mutator.handler
+    environment:
+      TABLE_NAME: !Ref ServiceResiliencyTable
+
+  api-handler:
+    handler: functions/api-handler.handler
+    timeout: 29
+    environment:
+      STATE_MACHINE_ARN: !Sub arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ServiceResiliencyWorkflow-${sls:stage}
+    events:
+      - http:
+          path: service-api
+          method: post
+          cors: true
+
+stepFunctions:
+  stateMachines:
+    ServiceResiliencyWorkflow:
+      type: EXPRESS
+      name: ServiceResiliencyWorkflow-${sls:stage}
+      loggingConfig:
+        level: ALL
+        includeExecutionData: true
+        destinations:
+          - Fn::GetAtt: [ServiceWorkflowLogGroup, Arn]
+      definition:
+        Comment: "Self-Healing Resilient Architecture with Circuit Breaker Pattern"
+        StartAt: GetSystemState
+        States:
+          GetSystemState:
+            Type: Task
+            Resource: !GetAtt GetDashstateLambdaFunction.Arn
+            Next: Router
+            ResultPath: "$.systemState"
+
+          Router:
+            Type: Choice
+            Choices:
+              - Variable: "$.systemState.currentLevel"
+                NumericEquals: 1
+                Next: TryServiceL1
+              - Variable: "$.systemState.currentLevel"
+                NumericEquals: 2
+                Next: ServiceL2
+            Default: MaintenanceResponse
+
+          TryServiceL1:
+            Type: Task
+            Resource: !GetAtt ServiceL1LambdaFunction.Arn
+            ResultPath: "$.serviceResult"
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                Next: RegisterFailure
+                ResultPath: "$.errorDetails"
+            Next: RegisterSuccess
+
+          ServiceL2:
+            Type: Task
+            Resource: !GetAtt ServiceL2LambdaFunction.Arn
+            ResultPath: "$.serviceResult"
+            Next: RegisterSuccess
+
+          RegisterFailure:
+            Type: Task
+            Resource: !GetAtt MutatorLambdaFunction.Arn
+            Parameters:
+              action: FAILURE
+              hadErrorFlag.$: "$.error"
+            ResultPath: "$.mutationResult"
+            Next: FailureResponse
+
+          RegisterSuccess:
+            Type: Task
+            Resource: !GetAtt MutatorLambdaFunction.Arn
+            Parameters:
+              action: SUCCESS
+              hadErrorFlag.$: "$.error"
+            ResultPath: "$.mutationResult"
+            Next: SuccessResponse
+
+          MaintenanceResponse:
+            Type: Choice
+            Choices:
+              - Variable: "$.error"
+                BooleanEquals: true
+                Next: MaintenanceErrorResponse
+            Default: MaintenanceSuccessResponse
+
+          MaintenanceErrorResponse:
+            Type: Pass
+            Result:
+              status: 503
+              level: 3
+              msg: "Nivel 3: Sistema bajo mantenimiento, intente más tarde"
+            ResultPath: "$.serviceResult"
+            Next: RegisterSuccess
+
+          MaintenanceSuccessResponse:
+            Type: Pass
+            Result:
+              status: 200
+              level: 3
+              msg: "Nivel 3: Operación al mínimo"
+            ResultPath: "$.serviceResult"
+            Next: RegisterSuccess
+
+          FailureResponse:
+            Type: Pass
+            Parameters:
+              status: 500
+              message: "Internal Server Error"
+            End: true
+
+          SuccessResponse:
+            Type: Pass
+            Parameters:
+              status.$: "$.serviceResult.status"
+              level.$: "$.serviceResult.level"
+              msg.$: "$.serviceResult.msg"
+            End: true
+
+resources:
+  Resources:
+    ServiceResiliencyTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ServiceResiliencyTable-${sls:stage}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+
+    ServiceWorkflowLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/vendedlogs/states/ServiceResiliencyWorkflow-${sls:stage}
+        RetentionInDays: 7
