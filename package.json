@@ -1,0 +1,34 @@
+{
+  "name": "resilient-service-system",
+  "version": "2.0.0",
+  "description": "Self-Healing Resilient Architecture using Circuit Breaker pattern with AWS Step Functions Express",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "serverless deploy",
+    "remove": "serverless remove",
+    "logs": "serverless logs -f",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "aws",
+    "serverless",
+    "step-functions",
+    "circuit-breaker",
+    "dynamodb",
+    "resilience"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.709.0",
+    "@aws-sdk/client-sfn": "^3.709.0",
+    "@aws-sdk/lib-dynamodb": "^3.709.0"
+  },
+  "devDependencies": {
+    "serverless": "^4.4.9",
+    "serverless-step-functions": "^3.23.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
