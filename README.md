@@ -1,165 +1,191 @@
-# Resilient Service System v2.0
+# Resilient Service System
 
-**Self-Healing Resilient Architecture using Circuit Breaker Pattern with AWS Step Functions Express**
+**Self-Healing Architecture with Circuit Breaker Pattern using AWS Step Functions Express**
+
+[![AWS](https://img.shields.io/badge/AWS-Serverless-orange)](https://aws.amazon.com/)
+[![Node.js](https://img.shields.io/badge/Node.js-20.x-green)](https://nodejs.org/)
+[![Serverless](https://img.shields.io/badge/Serverless-v4-red)](https://www.serverless.com/)
+
+---
 
 ## 📋 Overview
 
-This project implements an enterprise-grade resilient system using the Circuit Breaker pattern orchestrated by AWS Step Functions Express. The system automatically transitions between three operational levels (Full Capacity, Degraded Mode, and Maintenance) based on error thresholds, providing self-healing capabilities for high-throughput workloads.
+Enterprise-grade resilient system implementing the **Circuit Breaker** pattern orchestrated by **AWS Step Functions Express**. The system automatically transitions between three operational levels based on error thresholds, providing:
+
+- **Graceful Degradation**: Progressive reduction of capabilities under stress
+- **Automatic Recovery**: Self-healing when stability is proven
+- **Fault Tolerance**: Always responds, even during maintenance mode
+
+---
 
 ## 🏗️ Architecture
 
-### Architecture Diagram
+### System Components
 
 ![Architecture Diagram](./docs/architecture-diagram.png)
 
-### Workflow Diagram (Step Functions)
+### Step Functions Workflow
 
 ![Workflow Diagram](./docs/workflow-diagram.png)
 
-### System States
+---
 
-1. **Level 1 - Full Capacity**: Normal operations, all services available
-2. **Level 2 - Degraded Mode**: Activated after 5 errors, provides limited functionality
-3. **Level 3 - Maintenance**: Activated after 10 errors, system in recovery mode
+## 🚦 Service Levels
+
+| Level | Name | Description | Trigger |
+|-------|------|-------------|---------|
+| **1** | Full Capacity | All capabilities active | Default state |
+| **2** | Degraded | Essential services only, ignores error flag | `errorCount >= 5` |
+| **3** | Maintenance | Minimal operation, informative responses | `errorCount >= 10` |
 
 ### State Transitions
 
-- **Degradation**: Errors accumulate → Level 1 → Level 2 (5 errors) → Level 3 (10 errors)
-- **Recovery**: 10 consecutive genuine successes → Level 3 → Level 2 → Level 1
+```
+                    errorCount >= 5             errorCount >= 10
+         ┌────────────────────────────┐   ┌────────────────────────────┐
+         │                            ▼   │                            ▼
+   ┌─────┴─────┐                ┌─────┴───────┐                ┌──────────────┐
+   │  LEVEL 1  │                │   LEVEL 2   │                │   LEVEL 3    │
+   │   FULL    │                │  DEGRADED   │                │ MAINTENANCE  │
+   └─────▲─────┘                └──────▲──────┘                └──────┬───────┘
+         │                             │                              │
+         └─────────────────────────────┴──────────────────────────────┘
+              recoveryPoints >= 10          recoveryPoints >= 10
+```
+
+### Recovery Mechanism (Hysteresis)
+
+- **Degradation**: Fast (5 errors → L2, 10 errors → L3)
+- **Recovery**: Slow (requires 10 consecutive genuine successes)
+- Any error resets `recoveryPoints` to 0
+
+---
 
 ## 🛠️ Technical Stack
 
-- **Runtime**: Node.js 20.x
-- **Framework**: Serverless Framework v4
-- **AWS Services**:
-  - AWS Step Functions (Express Workflows)
-  - AWS Lambda
-  - Amazon DynamoDB
-  - Amazon API Gateway
-- **AWS SDK**: v3 (client-dynamodb, lib-dynamodb)
+| Component | Technology |
+|-----------|------------|
+| Runtime | Node.js 20.x |
+| Framework | Serverless Framework v4 |
+| Orchestration | AWS Step Functions Express |
+| Compute | AWS Lambda |
+| Database | Amazon DynamoDB (PAY_PER_REQUEST) |
+| API | Amazon API Gateway (REST) |
+| SDK | AWS SDK v3 |
+
+---
 
 ## 📁 Project Structure
 
 ```
 resilient-service-system/
+├── docs/
+│   ├── architecture-diagram.png    # System architecture diagram
+│   ├── workflow-diagram.png        # Step Functions workflow
+│   ├── SRD.md                      # Software Requirements Document
+│   └── ENTREGABLE_DOCUMENTACION_TECNICA.md
 ├── functions/
-│   ├── get-state.js      # Fetches current system state
-│   ├── services.js       # Service L1 (Full) and L2 (Degraded) handlers
-│   └── mutator.js        # Atomic state updates and level transitions
+│   ├── api-handler.js              # API Gateway → Step Functions proxy
+│   ├── get-state.js                # Reads current system state
+│   ├── services.js                 # Service L1 and L2 handlers
+│   └── mutator.js                  # State management and transitions
 ├── lib/
-│   └── dynamo.js         # DynamoDB client singleton
-├── serverless.yml        # Infrastructure as Code
-├── package.json          # Dependencies
-└── README.md            # This file
+│   └── dynamo.js                   # DynamoDB client singleton
+├── scripts/
+│   └── k6-test.js                  # Load testing script
+├── serverless.yml                  # Infrastructure as Code
+├── package.json
+└── README.md
 ```
+
+---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
 - Node.js >= 20.0.0
-- AWS CLI configured with appropriate credentials
+- AWS CLI configured with credentials
 - Serverless Framework v4
 
 ### Installation
 
 ```bash
+# Clone repository
+git clone https://github.com/ethx42/resilient-service-system.git
+cd resilient-service-system
+
 # Install dependencies
 npm install
 
-# Deploy to AWS
-npm run deploy
+# Deploy to AWS (dev stage)
+npx serverless deploy
 
-# Deploy to specific stage/region
-serverless deploy --stage prod --region us-west-2
+# Deploy to production
+npx serverless deploy --stage prod
 ```
 
 ### Configuration
 
-The system uses environment variables for configuration:
+Environment variables (auto-configured by Serverless):
 
-- `TABLE_NAME`: DynamoDB table name (auto-configured)
-- `AWS_REGION`: AWS region (default: us-east-1)
+| Variable | Description |
+|----------|-------------|
+| `TABLE_NAME` | DynamoDB table name |
+| `STATE_MACHINE_ARN` | Step Functions ARN |
+
+---
 
 ## 📊 DynamoDB Schema
 
-**Table Name**: `ServiceResiliencyTable-{stage}`
+**Table**: `ServiceResiliencyTable-{stage}`  
+**Billing**: PAY_PER_REQUEST
 
-| Attribute    | Type   | Description                       |
-| ------------ | ------ | --------------------------------- |
-| PK           | String | Partition Key: `"SYSTEM_STATE"`   |
-| currentLevel | Number | Current system level (1, 2, or 3) |
-| errorCount   | Number | Atomic error counter              |
-| lastUpdated  | String | ISO 8601 timestamp of last update |
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `PK` | String | Partition Key: `"SYSTEM_STATE"` (Singleton) |
+| `currentLevel` | Number | Current level: 1, 2, or 3 |
+| `errorCount` | Number | Accumulated error count |
+| `recoveryPoints` | Number | Consecutive genuine successes |
+| `lastUpdated` | String | ISO 8601 timestamp |
+
+---
 
 ## 🔄 Step Functions Workflow
 
 ```
 Start
-  ↓
-GetSystemState
-  ↓
-Router (Choice State)
-  ├─ Level 1 → TryServiceL1 → [Success/Failure]
-  ├─ Level 2 → ServiceL2 → Success
-  └─ Level 3 → MaintenanceResponse → Success
+  │
+  ▼
+GetSystemState ──── Read currentLevel from DynamoDB
+  │
+  ▼
+Router (Choice)
+  │
+  ├─ Level 1 ─────► TryServiceL1
+  │                     │
+  │                     ├─ Success ──► RegisterSuccess ──► SuccessResponse
+  │                     │
+  │                     └─ Catch ────► RegisterFailure ──► FailureResponse
+  │
+  ├─ Level 2 ─────► ServiceL2 ──► RegisterSuccess ──► SuccessResponse
+  │
+  └─ Default ─────► MaintenanceResponse (Choice)
+                        │
+                        ├─ error=true ──► MaintenanceErrorResponse ──► RegisterSuccess
+                        │                 "Sistema bajo mantenimiento"
+                        │
+                        └─ error=false ─► MaintenanceSuccessResponse ─► RegisterSuccess
+                                          "Operación al mínimo"
 ```
 
-## 🧪 Testing
-
-### Load Testing with k6
-
-The system is designed to handle high-throughput load testing. Example k6 script:
-
-```javascript
-import http from "k6/http";
-import { check } from "k6";
-
-export let options = {
-  stages: [
-    { duration: "30s", target: 100 },
-    { duration: "1m", target: 100 },
-    { duration: "30s", target: 0 },
-  ],
-};
-
-export default function () {
-  const url = "YOUR_API_GATEWAY_URL/service-api";
-  const payload = JSON.stringify({
-    error: Math.random() > 0.8, // 20% error rate
-  });
-
-  const params = {
-    headers: { "Content-Type": "application/json" },
-  };
-
-  const res = http.post(url, payload, params);
-
-  check(res, {
-    "status is 200 or 500": (r) => r.status === 200 || r.status === 500,
-  });
-}
-```
-
-### Manual Testing
-
-```bash
-# Test with success scenario
-curl -X POST https://YOUR_API_URL/service-api \
-  -H "Content-Type: application/json" \
-  -d '{"error": false}'
-
-# Test with error scenario
-curl -X POST https://YOUR_API_URL/service-api \
-  -H "Content-Type: application/json" \
-  -d '{"error": true}'
-```
+---
 
 ## 📝 API Reference
 
 ### POST /service-api
 
-**Request Body:**
+**Request:**
 
 ```json
 {
@@ -167,94 +193,128 @@ curl -X POST https://YOUR_API_URL/service-api \
 }
 ```
 
-**Response (Success - Level 1):**
+### Responses by Level
 
-```json
-{
-  "status": 200,
-  "level": 1,
-  "msg": "Full Capacity"
-}
+| Level | Condition | Status | Response |
+|-------|-----------|--------|----------|
+| 1 | `error: false` | 200 | `{ "status": 200, "level": 1, "msg": "Full Capacity" }` |
+| 1 | `error: true` | 500 | `{ "status": 500, "message": "Internal Server Error" }` |
+| 2 | Any | 200 | `{ "status": 200, "level": 2, "msg": "Degraded Mode" }` |
+| 3 | `error: false` | 200 | `{ "status": 200, "level": 3, "msg": "Nivel 3: Operación al mínimo" }` |
+| 3 | `error: true` | 503 | `{ "status": 503, "level": 3, "msg": "Nivel 3: Sistema bajo mantenimiento, intente más tarde" }` |
+
+---
+
+## 🧪 Testing
+
+### Load Testing with k6
+
+The project includes a k6 script that simulates 6 minutes of load with error patterns:
+
+```bash
+# Install k6
+brew install k6
+
+# Run the test (update URL in scripts/k6-test.js first)
+k6 run scripts/k6-test.js
 ```
 
-**Response (Success - Level 2):**
+**Test Distribution:**
 
-```json
-{
-  "status": 200,
-  "level": 2,
-  "msg": "Degraded Mode"
-}
+| Minute | Errors | Expected Behavior |
+|--------|--------|-------------------|
+| 1 | 5/20 | Degrades to L2 |
+| 2 | 0/20 | Accumulates recovery points |
+| 3 | 15/20 | Degrades to L3 |
+| 4 | 0/20 | Starts recovery |
+| 5 | 15/20 | Maintains/degrades |
+| 6 | 0/20 | Recovers to L1 |
+
+### Manual Testing
+
+```bash
+# Success request
+curl -X POST https://YOUR_API_URL/service-api \
+  -H "Content-Type: application/json" \
+  -d '{"error": false}'
+
+# Error request (triggers degradation)
+curl -X POST https://YOUR_API_URL/service-api \
+  -H "Content-Type: application/json" \
+  -d '{"error": true}'
 ```
 
-**Response (Maintenance - Level 3):**
-
-```json
-{
-  "status": 503,
-  "message": "Nivel 3: Sistema bajo mantenimiento, intente más tarde"
-}
-```
-
-**Response (Error):**
-
-```json
-{
-  "status": 500,
-  "message": "Internal Server Error"
-}
-```
+---
 
 ## 🔍 Monitoring
 
-View Step Functions execution logs:
+### CloudWatch Logs
 
 ```bash
-# View logs for specific function
-npm run logs -- --function get-state
-
-# View CloudWatch logs for Step Functions
+# Step Functions logs
 aws logs tail /aws/vendedlogs/states/ServiceResiliencyWorkflow-dev --follow
+
+# Lambda logs
+aws logs tail /aws/lambda/resilient-service-system-dev-mutator --follow
 ```
+
+### Key Metrics to Watch
+
+- `currentLevel` in DynamoDB
+- `errorCount` and `recoveryPoints`
+- Step Functions execution duration
+- Lambda invocation errors
+
+---
 
 ## 🧹 Cleanup
 
 ```bash
 # Remove all AWS resources
-npm run remove
+npx serverless remove
+
+# Remove specific stage
+npx serverless remove --stage prod
 ```
 
-## 📚 Clean Code Principles
+---
 
-This implementation follows clean code principles:
+## 📚 Documentation
 
-- **Single Responsibility**: Each Lambda function has one clear purpose
-- **Dependency Injection**: DynamoDB client is centralized and reusable
-- **Error Handling**: Comprehensive try/catch blocks with proper logging
-- **Async/Await**: Modern asynchronous code patterns
-- **No Legacy Code**: Uses AWS SDK v3 exclusively (v2 is forbidden)
+| Document | Description |
+|----------|-------------|
+| [SRD.md](./docs/SRD.md) | Software Requirements Document |
+| [ENTREGABLE_DOCUMENTACION_TECNICA.md](./docs/ENTREGABLE_DOCUMENTACION_TECNICA.md) | Technical Documentation (Spanish) |
+
+---
 
 ## 🔐 Security
 
-- IAM roles follow least-privilege principle
-- DynamoDB access restricted to specific operations
-- API Gateway with CORS enabled
-- Environment variables for configuration
+- **IAM**: Least-privilege principle
+- **DynamoDB**: Access restricted to specific operations
+- **API Gateway**: CORS enabled
+- **No hardcoded secrets**: Environment variables only
+
+---
+
+## 🏛️ Architecture Patterns
+
+| Pattern | Implementation |
+|---------|----------------|
+| **Circuit Breaker** | Step Functions Router with state-based routing |
+| **Graceful Degradation** | 3 service levels with decreasing functionality |
+| **Health Monitoring** | Atomic counters in DynamoDB |
+| **Self-Healing** | Automatic recovery via recoveryPoints |
+| **Hysteresis** | Asymmetric thresholds prevent oscillation |
+
+---
 
 ## 📄 License
 
 MIT
 
-## 👥 Contributing
-
-This is an enterprise-grade project following strict SRD specifications. All contributions must adhere to the defined architecture and code quality standards.
-
-## 🆘 Support
-
-For issues or questions, please refer to the Software Requirements Document (SRD) v2.0.
-
 ---
 
-**Status**: AUDITED & APPROVED FOR PRODUCTION  
-**Version**: 2.0.0  
-**Last Updated**: 2025
+**Author**: Santiago Torres Guevara  
+**Version**: 3.0.0  
+**Last Updated**: December 2025
